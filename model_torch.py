@@ -781,9 +781,9 @@ class Qwen2ForCausalLM(nn.Module):
     def __init__(self, config, use_lora: bool = False):
         super().__init__()
         self.config = config
-        """Toggle Qwen2Model(use_lora=True/False) for LoRA support"""
         use_lora_flag = use_lora if use_lora else getattr(config, 'use_lora', False)
-        self.model = Qwen2Model(config, use_lora=True) 
+        """Toggle Qwen2Model(use_lora=True/False) for LoRA support"""
+        self.model = Qwen2Model(config, use_lora=False) 
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
 
