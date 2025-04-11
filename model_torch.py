@@ -220,6 +220,7 @@ class Qwen2Config:
             if key != "tie_word_embeddings": 
                 setattr(self, key, value)
 
+        self.pad_token_id = kwargs.get("pad_token_id", 0) # Added and defined pad token for Qwen2Config
         super().__init__(
             # tie_word_embeddings=tie_word_embeddings,
             **kwargs # **{k: v for k, v in kwargs.items() if k != "tie_word_embeddings"}
@@ -619,7 +620,7 @@ class Qwen2Model(nn.Module):
         # ])
         self.norm = nn.LayerNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.config = config
-        self.padding_idx = config.pad_token_id
+        self.padding_idx = getattr(config, "pad_token_id", 0) # changed and added fallback
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(
