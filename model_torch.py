@@ -123,19 +123,17 @@ class LoRALinear(nn.Module):
             nn.init.zeros_(self.lora_B.weight)
 
             # Freeze the weights of the main linear layer when using LoRA
-            self.linear.weight.requires_grad = False
+            # This is critical for LoRA to work correctly
+            self.linear.weight.requires_grad_(False)
             if self.linear.bias is not None:
-                self.linear.bias.requires_grad = False
-        else:
-            self.lora_A = None
-            self.lora_B = None
-            self.scaling = None
+                self.linear.bias.requires_grad_(False)
     
     def forward(self, x):
         if self.use_lora and self.r > 0:
-            lora_out = self.lora_B(self.lora_A(x)) * self.scaling
-            return self.linear(x) + lora_out
+            # When using LoRA: main path + low-rank adaptation
+            return self.linear(x) + self.lora_B(self.lora_A(x)) * self.scaling
         else:
+            # When not using LoRA: just the main path
             return self.linear(x)
 
 class Qwen2Config:
@@ -612,26 +610,17 @@ class Qwen2Model(nn.Module):
 
     def __init__(self, config, use_lora: bool = False):
         super().__init__()
-        """list layers to store in ModuleList"""
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
-        # self.layers = nn.ModuleList([
-        #     Qwen2DecoderLayer(config, layer_idx=i) # possible hiccup
-        #     for i in range(config.num_hidden_layers)
-        # ])
-        self.norm = nn.LayerNorm(config.hidden_size, eps=config.rms_norm_eps)
+        self.use_lora = use_lora
         self.config = config
-        self.padding_idx = getattr(config, "pad_token_id", 0) # changed and added fallback
+        self.padding_idx = getattr(config, "pad_token_id", 0)
         self.vocab_size = config.vocab_size
-
         self.embed_tokens = nn.Embedding(
             config.vocab_size, config.hidden_size, self.padding_idx
         )
-        self.layers = nn.ModuleList(
-            [
-                Qwen2DecoderLayer(config, layer_idx, use_lora=use_lora)
-                for layer_idx in range(config.num_hidden_layers)
-            ]
-        )
+        self.layers = nn.ModuleList([
+            Qwen2DecoderLayer(config, layer_idx=layer_idx, use_lora=use_lora)
+            for layer_idx in range(config.num_hidden_layers)
+        ])
         self.norm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.rotary_emb = Qwen2RotaryEmbedding(config=config)
 
@@ -778,14 +767,15 @@ class Qwen2ForCausalLM(nn.Module):
     _tp_plan = {"lm_head": "colwise_rep"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
 
-    def __init__(self, config, use_lora: bool = False):
-        super().__init__()
-        self.config = config
-        use_lora_flag = use_lora if use_lora else getattr(config, 'use_lora', False)
-        """Toggle Qwen2Model(use_lora=True/False) for LoRA support"""
-        self.model = Qwen2Model(config, use_lora=False) 
-        self.vocab_size = config.vocab_size
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+def __init__(self, config, use_lora: bool = False):
+    super().__init__()
+    self.config = config
+    # Store the use_lora flag from either parameter or config
+    self.use_lora = use_lora if use_lora else getattr(config, 'use_lora', False)
+    # Pass the use_lora flag to the model
+    self.model = Qwen2Model(config, use_lora=self.use_lora)
+    self.vocab_size = config.vocab_size
+    self.lm_head = LoRALinear(config.hidden_size, config.vocab_size, bias=False, use_lora=self.use_lora)
 
     def forward(
         self,
@@ -983,3 +973,26 @@ print(
         generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
     )[0]
 )
+
+if __name__ == "__main__":
+    # Create a config with LoRA enabled
+    config = Qwen2Config(use_lora=True, lora_r=8, lora_alpha=32)
+
+    # Create model with LoRA
+    model_lora = Qwen2ForCausalLM(config)
+
+    # Check that base weights are frozen but LoRA weights are trainable
+    trainable_params = 0
+    frozen_params = 0
+
+    for name, param in model_lora.named_parameters():
+        if 'lora_A' in name or 'lora_B' in name:
+            assert param.requires_grad, f"LoRA parameter {name} should be trainable"
+            trainable_params += param.numel()
+        elif 'linear.weight' in name:
+            assert not param.requires_grad, f"Base weight {name} should be frozen"
+            frozen_params += param.numel()
+
+    print(f"Trainable parameters: {trainable_params}")
+    print(f"Frozen parameters: {frozen_params}")
+    print("LoRA implementation verified successfully!")
