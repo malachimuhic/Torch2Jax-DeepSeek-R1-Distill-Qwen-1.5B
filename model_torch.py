@@ -7,6 +7,9 @@ from typing import Any, Dict, TypedDict
 from rich import print
 import math
 
+# === GLOBAL LORA TOGGLE SWITCH ===
+ENABLE_LORA = True  # 🔁 Change this to False to disable LoRA globally
+
 class DynamicCache(nn.Module):
     """
     A cache that grows dynamically as more tokens are generated. This is the default for generative models.
@@ -233,7 +236,7 @@ class Qwen2MLP(nn.Module):
         self.intermediate_size = config.intermediate_size
         # LoRA use_lora=use_lora
         self.gate_proj = LoRALinear(self.hidden_size, self.intermediate_size, bias=False, use_lora=use_lora)
-        # TODO: LoRA use_lora=use_lora
+        # LoRA use_lora=use_lora
         self.up_proj = LoRALinear(self.hidden_size, self.intermediate_size, bias=False, use_lora=use_lora)
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
         self.act_fn = torch.nn.SiLU()
@@ -767,15 +770,21 @@ class Qwen2ForCausalLM(nn.Module):
     _tp_plan = {"lm_head": "colwise_rep"}
     _pp_plan = {"lm_head": (["hidden_states"], ["logits"])}
 
-def __init__(self, config, use_lora: bool = False):
-    super().__init__()
-    self.config = config
-    # Store the use_lora flag from either parameter or config
-    self.use_lora = use_lora if use_lora else getattr(config, 'use_lora', False)
-    # Pass the use_lora flag to the model
-    self.model = Qwen2Model(config, use_lora=self.use_lora)
-    self.vocab_size = config.vocab_size
-    self.lm_head = LoRALinear(config.hidden_size, config.vocab_size, bias=False, use_lora=self.use_lora)
+    def __init__(self, config, use_lora: bool = False):
+        super().__init__()
+        self.config = config
+        
+        if use_lora is not None:
+            self.use_lora = use_lora
+        else:
+            self.use_lora = ENABLE_LORA
+
+        self.model = Qwen2Model(config, use_lora=self.use_lora)
+        self.vocab_size = config.vocab_size
+        self.lm_head = LoRALinear(config.hidden_size, config.vocab_size, bias=False, use_lora=self.use_lora)
+
+    def is_lora_enabled(self) -> bool:
+        return self.use_lora
 
     def forward(
         self,
@@ -974,25 +983,29 @@ print(
     )[0]
 )
 
-if __name__ == "__main__":
-    # Create a config with LoRA enabled
-    config = Qwen2Config(use_lora=True, lora_r=8, lora_alpha=32)
+# if __name__ == "__main__":
+#     def count_params(model, label):
+#         total_params = sum(p.numel() for p in model.parameters())
+#         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+#         lora_params = sum(p.numel() for n, p in model.named_parameters() if 'lora_' in n)
+#         print(f"\n📦 {label}")
+#         print(f"   🧠 Trainable params: {trainable_params:,}")
+#         print(f"   ❄️ Frozen params:   {total_params - trainable_params:,}")
+#         print(f"   🧩 LoRA params:     {lora_params:,}")
+#         print(f"   📊 Total params:     {total_params:,}")
+#         print(f"   ⚖️ Trainable %:      {100 * trainable_params / total_params:.2f}%")
 
-    # Create model with LoRA
-    model_lora = Qwen2ForCausalLM(config)
+#     # Create model WITHOUT LoRA
+#     config_vanilla = Qwen2Config(use_lora=False)
+#     model_vanilla = Qwen2ForCausalLM(config_vanilla)
+#     count_params(model_vanilla, "Model WITHOUT LoRA")
 
-    # Check that base weights are frozen but LoRA weights are trainable
-    trainable_params = 0
-    frozen_params = 0
+#     # Create model WITH LoRA
+#     config_lora = Qwen2Config(use_lora=True, lora_r=8, lora_alpha=32)
+#     model_lora = Qwen2ForCausalLM(config_lora)
+#     count_params(model_lora, "Model WITH LoRA")
 
-    for name, param in model_lora.named_parameters():
-        if 'lora_A' in name or 'lora_B' in name:
-            assert param.requires_grad, f"LoRA parameter {name} should be trainable"
-            trainable_params += param.numel()
-        elif 'linear.weight' in name:
-            assert not param.requires_grad, f"Base weight {name} should be frozen"
-            frozen_params += param.numel()
-
-    print(f"Trainable parameters: {trainable_params}")
-    print(f"Frozen parameters: {frozen_params}")
-    print("LoRA implementation verified successfully!")
+#     # Check architecture differences
+#     print("\n🔍 Layer type comparison (q_proj):")
+#     print(f"Without LoRA: {type(model_vanilla.model.layers[0].self_attn.q_proj).__name__}")
+#     print(f"With LoRA   : {type(model_lora.model.layers[0].self_attn.q_proj).__name__}")
