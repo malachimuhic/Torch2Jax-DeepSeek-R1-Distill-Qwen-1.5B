@@ -894,86 +894,86 @@ class Qwen2ForCausalLM(nn.Module):
         return generated
 
 
-from transformers import AutoModelForCausalLM, AutoTokenizer
+# from transformers import AutoModelForCausalLM, AutoTokenizer
 
 
-model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+# model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
 
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForCausalLM.from_pretrained(model_name)
+# tokenizer = AutoTokenizer.from_pretrained(model_name)
+# model = AutoModelForCausalLM.from_pretrained(model_name)
 
-state_dict = model.state_dict()
-print(state_dict.keys())
-print(model)
-
-
-# Assuming you have a local implementation that matches the Hugging Face architecture
-local_model = Qwen2ForCausalLM(model.config)
-"""TEST"""
-print(f"🔁 LoRA enabled? {local_model.is_lora_enabled()}")
-
-# Use strict=False to ignore non-matching keys if necessary
-local_model.load_state_dict(state_dict, strict=False)
+# state_dict = model.state_dict()
+# print(state_dict.keys())
+# print(model)
 
 
-# Create some dummy inputs
-input_ids = torch.randint(
-    0, model.config.vocab_size, (1, 32)
-)  # adjust dimensions as needed
+# # Assuming you have a local implementation that matches the Hugging Face architecture
+# local_model = Qwen2ForCausalLM(model.config)
+# """TEST"""
+# print(f"🔁 LoRA enabled? {local_model.is_lora_enabled()}")
 
-# Get outputs from the Hugging Face model
-hf_outputs = model(input_ids=input_ids)
+# # Use strict=False to ignore non-matching keys if necessary
+# local_model.load_state_dict(state_dict, strict=False)
 
 
-# Get outputs from your local model
-local_outputs = local_model(input_ids=input_ids)
+# # Create some dummy inputs
+# input_ids = torch.randint(
+#     0, model.config.vocab_size, (1, 32)
+# )  # adjust dimensions as needed
 
-# Compare (for example, the logits)
-# Replace line 935 in model_torch.py with this:
-try:
-    # Move tensors to CPU for comparison if they're on different devices
-    hf_logits = hf_outputs.logits.cpu()
-    local_logits = local_outputs[1].cpu()
+# # Get outputs from the Hugging Face model
+# hf_outputs = model(input_ids=input_ids)
+
+
+# # Get outputs from your local model
+# local_outputs = local_model(input_ids=input_ids)
+
+# # Compare (for example, the logits)
+# # Replace line 935 in model_torch.py with this:
+# try:
+#     # Move tensors to CPU for comparison if they're on different devices
+#     hf_logits = hf_outputs.logits.cpu()
+#     local_logits = local_outputs[1].cpu()
     
-    # Use a larger tolerance since CPU and different implementations might have slight differences
-    are_close = torch.allclose(hf_logits, local_logits, atol=1e-3)
-    if are_close:
-        print("Model outputs match! ✓")
-    else:
-        print("Warning: Model outputs differ slightly.")
-        # Calculate the maximum difference to see how far off they are
-        max_diff = torch.max(torch.abs(hf_logits - local_logits))
-        print(f"Maximum difference: {max_diff.item()}")
-except Exception as e:
-    print(f"Couldn't compare model outputs: {e}")
-    print("Continuing without verification...")
-import torch
-# Ensure CUDA is available
-device = torch.device("cpu")
+#     # Use a larger tolerance since CPU and different implementations might have slight differences
+#     are_close = torch.allclose(hf_logits, local_logits, atol=1e-3)
+#     if are_close:
+#         print("Model outputs match! ✓")
+#     else:
+#         print("Warning: Model outputs differ slightly.")
+#         # Calculate the maximum difference to see how far off they are
+#         max_diff = torch.max(torch.abs(hf_logits - local_logits))
+#         print(f"Maximum difference: {max_diff.item()}")
+# except Exception as e:
+#     print(f"Couldn't compare model outputs: {e}")
+#     print("Continuing without verification...")
+# import torch
+# # Ensure CUDA is available
+# device = torch.device("cpu")
 
-# Move local model to GPU
-local_model = local_model.to(device)
+# # Move local model to GPU
+# local_model = local_model.to(device)
 
-# Move dummy inputs to GPU
-input_ids = input_ids.to(device)
-local_model = local_model.to(device)
-# If you're using the Hugging Face model
-model = model.to(device)  
-# Now, any forward pass or generation will happen on the GPU
-local_outputs = local_model(input_ids=input_ids)
+# # Move dummy inputs to GPU
+# input_ids = input_ids.to(device)
+# local_model = local_model.to(device)
+# # If you're using the Hugging Face model
+# model = model.to(device)  
+# # Now, any forward pass or generation will happen on the GPU
+# local_outputs = local_model(input_ids=input_ids)
 
-# For generation, also move the prompt inputs to GPU:
-prompt = "What is 3 + 4? <think>\n"
-inputs = tokenizer(prompt, return_tensors="pt").to(device)
+# # For generation, also move the prompt inputs to GPU:
+# prompt = "What is 3 + 4? <think>\n"
+# inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
-generate_ids = local_model.generate(inputs["input_ids"], max_new_tokens=30)
-print(generate_ids)
+# generate_ids = local_model.generate(inputs["input_ids"], max_new_tokens=30)
+# print(generate_ids)
 
-print(
-    tokenizer.batch_decode(
-        generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
-    )[0]
-)
+# print(
+#     tokenizer.batch_decode(
+#         generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
+#     )[0]
+# )
 
 # if __name__ == "__main__":
 #     def count_params(model, label):
