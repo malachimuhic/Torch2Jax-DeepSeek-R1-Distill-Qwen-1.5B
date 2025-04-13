@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from torch import nn
 from typing import Any, Dict, TypedDict
 from rich import print
+from transformers import PretrainedConfig
 import math
 
 # === GLOBAL LORA TOGGLE SWITCH ===
@@ -139,12 +140,12 @@ class LoRALinear(nn.Module):
             # When not using LoRA: just the main path
             return self.linear(x)
 
-class Qwen2Config:
+from transformers import PretrainedConfig
 
+class Qwen2Config(PretrainedConfig):
     model_type = "qwen2"
     keys_to_ignore_at_inference = ["past_key_values"]
 
-    # Default tensor parallel plan for base model `Qwen2`
     base_model_tp_plan = {
         "layers.*.self_attn.q_proj": "colwise",
         "layers.*.self_attn.k_proj": "colwise",
@@ -183,8 +184,14 @@ class Qwen2Config:
         sliding_window=4096,
         max_window_layers=28,
         attention_dropout=0.0,
+        pad_token_id=0,
         **kwargs,
     ):
+        super().__init__(
+            pad_token_id=pad_token_id,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
         self.lora_r = lora_r
         self.lora_alpha = lora_alpha
         self.use_lora = use_lora
@@ -194,38 +201,21 @@ class Qwen2Config:
         self.intermediate_size = intermediate_size
         self.num_hidden_layers = num_hidden_layers
         self.num_attention_heads = num_attention_heads
-        self.use_sliding_window = use_sliding_window
-        self.sliding_window = (
-            sliding_window  # we check `use_sliding_window` in the modeling code
-        )
-        self.max_window_layers = max_window_layers
-
-        # for backward compatibility
-        if num_key_value_heads is None:
-            num_key_value_heads = num_attention_heads
-
-        self.num_key_value_heads = num_key_value_heads
+        self.num_key_value_heads = num_key_value_heads or num_attention_heads
         self.hidden_act = hidden_act
         self.initializer_range = initializer_range
         self.rms_norm_eps = rms_norm_eps
         self.use_cache = use_cache
         self.rope_theta = rope_theta
         self.rope_scaling = rope_scaling
+        self.use_sliding_window = use_sliding_window
+        self.sliding_window = sliding_window
+        self.max_window_layers = max_window_layers
         self.attention_dropout = attention_dropout
-        # Validate the correctness of rotary position embeddings parameters
-        # BC: if there is a 'type' field, move it to 'rope_type'.
-        if self.rope_scaling is not None and "type" in self.rope_scaling:
+
+        if self.rope_scaling and "type" in self.rope_scaling:
             self.rope_scaling["rope_type"] = self.rope_scaling["type"]
 
-        for key, value in kwargs.items():
-            if key != "tie_word_embeddings": 
-                setattr(self, key, value)
-
-        self.pad_token_id = kwargs.get("pad_token_id", 0) # Added and defined pad token for Qwen2Config
-        super().__init__(
-            # tie_word_embeddings=tie_word_embeddings,
-            **kwargs # **{k: v for k, v in kwargs.items() if k != "tie_word_embeddings"}
-        )
 
 
 class Qwen2MLP(nn.Module):
@@ -919,6 +909,8 @@ print(model)
 
 # Assuming you have a local implementation that matches the Hugging Face architecture
 local_model = Qwen2ForCausalLM(model.config)
+"""TEST"""
+print(f"🔁 LoRA enabled? {local_model.is_lora_enabled()}")
 
 # Use strict=False to ignore non-matching keys if necessary
 local_model.load_state_dict(state_dict, strict=False)
