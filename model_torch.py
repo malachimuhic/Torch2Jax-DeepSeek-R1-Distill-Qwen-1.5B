@@ -789,6 +789,14 @@ class Qwen2ForCausalLM(nn.Module):
     def is_lora_enabled(self) -> bool:
         return self.use_lora
 
+    def loss_function(self, logits, labels, vocab_size, **kwargs):
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+
+        loss_fct = nn.CrossEntropyLoss()
+        loss = loss_fct(shift_logits.view(-1, vocab_size), shift_labels.view(-1))
+        return loss
+
     def forward(
         self,
         input_ids: torch.LongTensor = None,
