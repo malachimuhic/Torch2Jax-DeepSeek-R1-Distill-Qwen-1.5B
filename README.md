@@ -83,6 +83,24 @@ To build infrastructure that allows flexible extension and fine-tuning of transf
 Google Colab: https://drive.google.com/file/d/1p3zRZDR38YMAVMShNtO4kAf0bkOKEsgd/view?usp=sharing
 ## LoRA: Low-Rank Adaptation Overview
 
+# Results of Fine-Tuning
+
+Custom model (Full fine-tuning): 69.2406 sec for 1 step(s)
+
+Trainable params: 1,777,088,000
+
+
+Custom model (LoRA fine-tuning): 11.2578 sec for 1 step(s)
+
+Trainable params: 6,881,280
+
+
+ Parameter Breakdown
+- Trainable:     6,881,280
+- Frozen:        1,777,088,000
+- LoRA params:   6,881,280
+- Trainable %:   0.3857%
+
 LoRA replaces large weight updates with small, trainable low-rank matrices (`A` and `B`) that are added to existing model layers. This drastically reduces the number of parameters needed during fine-tuning while maintaining performance.
 
 > Learn more in the original paper: [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685)
