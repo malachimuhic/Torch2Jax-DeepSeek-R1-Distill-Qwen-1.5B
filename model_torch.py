@@ -142,6 +142,8 @@ class LoRALinear(nn.Module):
 
 from transformers import PretrainedConfig
 
+from transformers import PretrainedConfig
+
 class Qwen2Config(PretrainedConfig):
     model_type = "qwen2"
     keys_to_ignore_at_inference = ["past_key_values"]
@@ -167,11 +169,11 @@ class Qwen2Config(PretrainedConfig):
         lora_alpha=32,
         use_lora=False,
         vocab_size=151936,
-        hidden_size=4096,
-        intermediate_size=22016,
+        hidden_size=1536,
+        intermediate_size=8960,
         num_hidden_layers=32,
-        num_attention_heads=32,
-        num_key_value_heads=32,
+        num_attention_heads=24,
+        num_key_value_heads=24,
         hidden_act="silu",
         max_position_embeddings=32768,
         initializer_range=0.02,
@@ -892,112 +894,3 @@ class Qwen2ForCausalLM(nn.Module):
             generated = torch.cat([generated, next_token], dim=1)
 
         return generated
-
-
-# from transformers import AutoModelForCausalLM, AutoTokenizer
-
-
-# model_name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
-
-# tokenizer = AutoTokenizer.from_pretrained(model_name)
-# model = AutoModelForCausalLM.from_pretrained(model_name)
-
-# state_dict = model.state_dict()
-# print(state_dict.keys())
-# print(model)
-
-
-# # Assuming you have a local implementation that matches the Hugging Face architecture
-# local_model = Qwen2ForCausalLM(model.config)
-# """TEST"""
-# print(f"🔁 LoRA enabled? {local_model.is_lora_enabled()}")
-
-# # Use strict=False to ignore non-matching keys if necessary
-# local_model.load_state_dict(state_dict, strict=False)
-
-
-# # Create some dummy inputs
-# input_ids = torch.randint(
-#     0, model.config.vocab_size, (1, 32)
-# )  # adjust dimensions as needed
-
-# # Get outputs from the Hugging Face model
-# hf_outputs = model(input_ids=input_ids)
-
-
-# # Get outputs from your local model
-# local_outputs = local_model(input_ids=input_ids)
-
-# # Compare (for example, the logits)
-# # Replace line 935 in model_torch.py with this:
-# try:
-#     # Move tensors to CPU for comparison if they're on different devices
-#     hf_logits = hf_outputs.logits.cpu()
-#     local_logits = local_outputs[1].cpu()
-    
-#     # Use a larger tolerance since CPU and different implementations might have slight differences
-#     are_close = torch.allclose(hf_logits, local_logits, atol=1e-3)
-#     if are_close:
-#         print("Model outputs match! ✓")
-#     else:
-#         print("Warning: Model outputs differ slightly.")
-#         # Calculate the maximum difference to see how far off they are
-#         max_diff = torch.max(torch.abs(hf_logits - local_logits))
-#         print(f"Maximum difference: {max_diff.item()}")
-# except Exception as e:
-#     print(f"Couldn't compare model outputs: {e}")
-#     print("Continuing without verification...")
-# import torch
-# # Ensure CUDA is available
-# device = torch.device("cpu")
-
-# # Move local model to GPU
-# local_model = local_model.to(device)
-
-# # Move dummy inputs to GPU
-# input_ids = input_ids.to(device)
-# local_model = local_model.to(device)
-# # If you're using the Hugging Face model
-# model = model.to(device)  
-# # Now, any forward pass or generation will happen on the GPU
-# local_outputs = local_model(input_ids=input_ids)
-
-# # For generation, also move the prompt inputs to GPU:
-# prompt = "What is 3 + 4? <think>\n"
-# inputs = tokenizer(prompt, return_tensors="pt").to(device)
-
-# generate_ids = local_model.generate(inputs["input_ids"], max_new_tokens=30)
-# print(generate_ids)
-
-# print(
-#     tokenizer.batch_decode(
-#         generate_ids, skip_special_tokens=True, clean_up_tokenization_spaces=False
-#     )[0]
-# )
-
-# if __name__ == "__main__":
-#     def count_params(model, label):
-#         total_params = sum(p.numel() for p in model.parameters())
-#         trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-#         lora_params = sum(p.numel() for n, p in model.named_parameters() if 'lora_' in n)
-#         print(f"\n📦 {label}")
-#         print(f"   🧠 Trainable params: {trainable_params:,}")
-#         print(f"   ❄️ Frozen params:   {total_params - trainable_params:,}")
-#         print(f"   🧩 LoRA params:     {lora_params:,}")
-#         print(f"   📊 Total params:     {total_params:,}")
-#         print(f"   ⚖️ Trainable %:      {100 * trainable_params / total_params:.2f}%")
-
-#     # Create model WITHOUT LoRA
-#     config_vanilla = Qwen2Config(use_lora=False)
-#     model_vanilla = Qwen2ForCausalLM(config_vanilla)
-#     count_params(model_vanilla, "Model WITHOUT LoRA")
-
-#     # Create model WITH LoRA
-#     config_lora = Qwen2Config(use_lora=True, lora_r=8, lora_alpha=32)
-#     model_lora = Qwen2ForCausalLM(config_lora)
-#     count_params(model_lora, "Model WITH LoRA")
-
-#     # Check architecture differences
-#     print("\n🔍 Layer type comparison (q_proj):")
-#     print(f"Without LoRA: {type(model_vanilla.model.layers[0].self_attn.q_proj).__name__}")
-#     print(f"With LoRA   : {type(model_lora.model.layers[0].self_attn.q_proj).__name__}")
