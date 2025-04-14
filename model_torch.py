@@ -106,10 +106,10 @@ class DynamicCache(nn.Module):
         return layer_seq_length
 
 class LoRALinear(nn.Module):
-    """LoRA (Low-Rank Adaptation) support from low-rank adaptation of large language models paper"""
+    """LoRA (Low-Rank Adaptation) implementation with proper weight initialization"""
     def __init__(self, in_features, out_features, r=8, lora_alpha=32, bias=False, use_lora=True):
         super().__init__()
-        self.use_lora = use_lora
+        self.use_lora = use_lora and ENABLE_LORA  # Check both local and global flags
         self.r = r
         self.lora_alpha = lora_alpha
         
@@ -122,23 +122,27 @@ class LoRALinear(nn.Module):
             self.lora_B = nn.Linear(r, out_features, bias=False)
             self.scaling = lora_alpha / r
 
-            # Initialize weights as per the LoRA paper
-            nn.init.kaiming_uniform_(self.lora_A.weight, a=math.sqrt(5))
+            # Initialize weights properly - critical for LoRA
+            # A initialized with normal distribution
+            nn.init.normal_(self.lora_A.weight, mean=0.0, std=0.02)
+            # B initialized with zeros
             nn.init.zeros_(self.lora_B.weight)
 
             # Freeze the weights of the main linear layer when using LoRA
-            # This is critical for LoRA to work correctly
             self.linear.weight.requires_grad_(False)
-            if self.linear.bias is not None:
+            if bias and self.linear.bias is not None:
                 self.linear.bias.requires_grad_(False)
     
     def forward(self, x):
+        main_output = self.linear(x)
+        
         if self.use_lora and self.r > 0:
-            # When using LoRA: main path + low-rank adaptation
-            return self.linear(x) + self.lora_B(self.lora_A(x)) * self.scaling
+            # Apply LoRA: main path + low-rank adaptation
+            lora_output = self.lora_B(self.lora_A(x)) * self.scaling
+            return main_output + lora_output
         else:
-            # When not using LoRA: just the main path
-            return self.linear(x)
+            # Without LoRA: just the main path
+            return main_output
 
 from transformers import PretrainedConfig
 
@@ -773,8 +777,12 @@ class Qwen2ForCausalLM(nn.Module):
 
         self.model = Qwen2Model(config, use_lora=self.use_lora)
         self.vocab_size = config.vocab_size
-        self.lm_head = LoRALinear(config.hidden_size, config.vocab_size, bias=False, use_lora=self.use_lora)
-
+        self.lm_head = LoRALinear(
+            config.hidden_size, 
+            config.vocab_size, 
+            bias=False, 
+            use_lora=False  
+        )
     def is_lora_enabled(self) -> bool:
         return self.use_lora
 
@@ -843,43 +851,70 @@ class Qwen2ForCausalLM(nn.Module):
         max_new_tokens: int,
         temperature: float = 1.0,
         do_sample: bool = False,
-        top_k: int = None,
+        top_k: int = 50,  # Add a default value
+        top_p: float = 0.9,  # Add top_p sampling
         **kwargs,
     ) -> torch.LongTensor:
         """
-        Generate tokens autoregressively.
+        Generate tokens autoregressively with improved sampling options.
         """
-        self.eval()  # set model to evaluation mode
+        self.eval()  # Set model to evaluation mode
         generated = input_ids
-        past = None  # cache for past key values
+        past = None  # Cache for past key values
+        device = input_ids.device
 
         for _ in tqdm(range(max_new_tokens), desc="Generating tokens"):
-
-            input_ids_cond = generated
-
             # If using past_key_values, only feed in the last token
             if past is not None:
-                input_ids_cond = input_ids_cond[:, -1:]
+                input_ids_cond = generated[:, -1:]
+            else:
+                input_ids_cond = generated
 
             # Forward pass (set use_cache=True to enable caching)
             loss, logits, past, _ = self(
                 input_ids=input_ids_cond,
                 past_key_values=past,
                 use_cache=True,
-                return_dict=True,
                 **kwargs,
             )
 
-            # Only consider the logits for the last token and scale by temperature
-            logits = logits[:, -1, :] / temperature
+            # Only consider logits for the last token
+            logits = logits[:, -1, :]
 
-            # Optionally restrict to top_k tokens
-            if top_k is not None:
-                top_values, _ = torch.topk(logits, top_k, dim=-1)
-                kth_value = top_values[:, -1].unsqueeze(-1)
-                logits = torch.where(
-                    logits < kth_value, torch.full_like(logits, float("-inf")), logits
+            # Apply temperature scaling
+            if temperature > 0:
+                logits = logits / temperature
+            
+            # Filter out special tokens if needed (optional)
+            # logits[:, special_token_ids] = -float('inf')
+            
+            # Apply top_k filtering
+            if top_k > 0:
+                top_k = min(top_k, logits.size(-1))
+                values, _ = torch.topk(logits, top_k)
+                min_values = values[:, -1].unsqueeze(1).repeat(1, logits.shape[-1])
+                logits = torch.where(logits < min_values, 
+                                    torch.ones_like(logits) * -float('inf'), 
+                                    logits)
+            
+            # Apply top_p (nucleus) filtering
+            if top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                
+                # Remove tokens with cumulative probability above the threshold
+                sorted_indices_to_remove = cumulative_probs > top_p
+                # Shift the indices to the right to keep the first token above threshold
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+                
+                # Scatter sorted tensors to original indexing
+                indices_to_remove = sorted_indices_to_remove.scatter(
+                    dim=1, 
+                    index=sorted_indices, 
+                    src=sorted_indices_to_remove
                 )
+                logits = logits.masked_fill(indices_to_remove, -float('inf'))
 
             # Convert logits to probabilities
             probs = F.softmax(logits, dim=-1)
