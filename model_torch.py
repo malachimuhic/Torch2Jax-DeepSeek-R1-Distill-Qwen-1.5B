@@ -106,45 +106,48 @@ class DynamicCache(nn.Module):
         return layer_seq_length
 
 class LoRALinear(nn.Module):
-    """LoRA (Low-Rank Adaptation) implementation with proper weight initialization"""
+    """LoRA (Low-Rank Adaptation) implementation"""
     def __init__(self, in_features, out_features, r=8, lora_alpha=32, bias=False, use_lora=True):
         super().__init__()
+        # Store the original parameters
+        self.in_features = in_features
+        self.out_features = out_features
         self.use_lora = use_lora and ENABLE_LORA  # Check both local and global flags
         self.r = r
         self.lora_alpha = lora_alpha
         
-        # Create the main linear layer with the specified bias
+        # Create standard linear layer that will hold pretrained weights
         self.linear = nn.Linear(in_features, out_features, bias=bias)
-
+        
+        # Only create LoRA layers if enabled
         if self.use_lora and r > 0:
-            # LoRA layers never use bias as per the paper
-            self.lora_A = nn.Linear(in_features, r, bias=False)
-            self.lora_B = nn.Linear(r, out_features, bias=False)
+            # Create LoRA A and B matrices
+            self.lora_A = nn.Parameter(torch.zeros(r, in_features))
+            self.lora_B = nn.Parameter(torch.zeros(out_features, r))
             self.scaling = lora_alpha / r
-
-            # Initialize weights properly - critical for LoRA
-            # A initialized with normal distribution
-            nn.init.normal_(self.lora_A.weight, mean=0.0, std=0.02)
-            # B initialized with zeros
-            nn.init.zeros_(self.lora_B.weight)
-
-            # Freeze the weights of the main linear layer when using LoRA
+            
+            # Initialize LoRA weights properly
+            # Initialize A with small random values
+            nn.init.kaiming_uniform_(self.lora_A, a=math.sqrt(5))
+            # Initialize B with zeros for stability
+            nn.init.zeros_(self.lora_B)
+            
+            # Freeze pretrained weights
             self.linear.weight.requires_grad_(False)
             if bias and self.linear.bias is not None:
                 self.linear.bias.requires_grad_(False)
     
     def forward(self, x):
-        main_output = self.linear(x)
+        # Standard linear projection
+        result = self.linear(x)
         
+        # Add LoRA contribution if enabled
         if self.use_lora and self.r > 0:
-            # Apply LoRA: main path + low-rank adaptation
-            lora_output = self.lora_B(self.lora_A(x)) * self.scaling
-            return main_output + lora_output
+            # More efficient implementation (transpose for right dimensions)
+            lora_output = (x @ self.lora_A.transpose(0, 1)) @ self.lora_B.transpose(0, 1)
+            return result + (lora_output * self.scaling)
         else:
-            # Without LoRA: just the main path
-            return main_output
-
-from transformers import PretrainedConfig
+            return result
 
 from transformers import PretrainedConfig
 
